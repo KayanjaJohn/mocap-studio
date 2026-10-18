@@ -61,7 +61,7 @@ Never place the Supabase service-role key in browser code or a `NEXT_PUBLIC_` va
 
 ## Current limitations
 
-- The UI currently associates face blendshape output with pose detections by array index; this is not robust multi-person identity association yet.
+- Face blendshape output is matched to the nearest pose nose as a basic heuristic; stable multi-person identity association across frames is not implemented yet.
 - Motion recording is held in client memory until exported. Reloading loses the take.
 - Facial landmarks and blendshape scores are extracted, but no facial animation is yet retargeted to a 3D character.
 - Avatar import, full rig retargeting, rendered video, and Supabase Auth flows are not yet implemented.
