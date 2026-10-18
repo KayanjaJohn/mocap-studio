@@ -219,9 +219,7 @@ export default function Studio() {
               ctx.beginPath(); ctx.arc(ox + p.x * dw, oy + p.y * dh, 1.25, 0, Math.PI * 2); ctx.fill();
             }));
           }
-          /* people overlays are drawn above the source frame */
-          if (viewMode === "source") { /* source-only mode intentionally hides tracking overlays */ }
-            });
+          /* Source-only mode intentionally hides tracking overlays. */
           }
         } catch (e) { setNote(`Tracking frame error: ${e instanceof Error ? e.message : String(e)}`); }
       } else paint();
@@ -232,9 +230,16 @@ export default function Studio() {
   }
 
   function stopTracking() {
+    playingRef.current = false;
     setPlaying(false);
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     if (sourceKind === "video") videoRef.current?.pause();
+    if (recordingRef.current) {
+      recordingRef.current = false;
+      setRecording(false);
+      setNote(`Tracking paused. Take retained with ${motionFramesRef.current.length} frames.`);
+      return;
+    }
     setNote("Tracking paused.");
   }
 
