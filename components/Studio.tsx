@@ -122,7 +122,6 @@ export default function Studio() {
   async function useVideoFile(file?: File) {
     if (!file || !videoRef.current) return;
     playingRef.current = false;
-    playingRef.current = false;
     setPlaying(false);
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     const oldStream = videoRef.current.srcObject;
