@@ -27,7 +27,7 @@ The application intentionally does **not** import MediaPipe from browser CDNs. B
 - `public/models/pose_landmarker_lite.task` — Pose Landmarker Lite model
 - `public/models/face_landmarker.task` — Face Landmarker model
 
-The runtime package is installed from npm. To prepare the WASM files manually after `npm install`, on macOS/Linux:
+The runtime package is installed from npm. To keep high-resolution video playback responsive, motion inference uses a downscaled copy with a maximum 640-pixel edge and is capped near 15 inference frames per second. Original video playback is not slowed to this processing rate. Recording updates the UI in batches to reduce rendering overhead. To prepare the WASM files manually after `npm install`, on macOS/Linux:
 
 ```bash
 mkdir -p public/mediapipe/wasm public/models
@@ -61,7 +61,7 @@ Never place the Supabase service-role key in browser code or a `NEXT_PUBLIC_` va
 
 ## Current limitations
 
-- The UI currently associates face blendshape output with pose detections by array index; this is not robust multi-person identity association yet.
+- Face blendshape output is matched to the nearest pose nose as a basic heuristic; stable multi-person identity association across frames is not implemented yet.
 - Motion recording is held in client memory until exported. Reloading loses the take.
 - Facial landmarks and blendshape scores are extracted, but no facial animation is yet retargeted to a 3D character.
 - Avatar import, full rig retargeting, rendered video, and Supabase Auth flows are not yet implemented.
