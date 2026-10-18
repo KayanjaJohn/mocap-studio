@@ -24,6 +24,11 @@ export default function Studio() {
   const faceRef = useRef<FaceLandmarker | null>(null);
   const rafRef = useRef<number | null>(null);
   const lastTimeRef = useRef(-1);
+  const recordingRef = useRef(false);
+  const playingRef = useRef(false);
+  const sourceKindRef = useRef<"video" | "camera" | null>(null);
+  const motionFramesRef = useRef<{ t: number; people: CapturePerson[] }[]>([]);
+  const objectUrlRef = useRef<string | null>(null);
   const [engine, setEngine] = useState<EngineState>("idle");
   const [engineMessage, setEngineMessage] = useState("Capture engine not loaded");
   const [sourceName, setSourceName] = useState("");
@@ -37,12 +42,18 @@ export default function Studio() {
   const [poseConfidence, setPoseConfidence] = useState(0.55);
   const [faceConfidence, setFaceConfidence] = useState(0.5);
   const [motionFrames, setMotionFrames] = useState<{ t: number; people: CapturePerson[] }[]>([]);
+  const [viewMode, setViewMode] = useState<"tracking" | "source" | "skeleton">("tracking");
   const [recording, setRecording] = useState(false);
   const [note, setNote] = useState("Import a video or connect your camera to begin.");
   const [activeTab, setActiveTab] = useState("Capture");
 
   useEffect(() => () => {
+    playingRef.current = false;
+    recordingRef.current = false;
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    const stream = videoRef.current?.srcObject;
+    if (stream instanceof MediaStream) stream.getTracks().forEach(track => track.stop());
+    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
     poseRef.current?.close();
     faceRef.current?.close();
   }, []);
@@ -56,7 +67,7 @@ export default function Studio() {
     const w = canvas.width, h = canvas.height;
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = "#080e1a"; ctx.fillRect(0, 0, w, h);
-    if (video.readyState >= 2 && video.videoWidth > 0) {
+    if (viewMode !== "skeleton" && video.readyState >= 2 && video.videoWidth > 0) {
       const scale = Math.min(w / video.videoWidth, h / video.videoHeight);
       const dw = video.videoWidth * scale, dh = video.videoHeight * scale;
       ctx.drawImage(video, (w - dw) / 2, (h - dh) / 2, dw, dh);
@@ -110,11 +121,18 @@ export default function Studio() {
 
   async function useVideoFile(file?: File) {
     if (!file || !videoRef.current) return;
-    if (videoRef.current.src.startsWith("blob:")) URL.revokeObjectURL(videoRef.current.src);
+    playingRef.current = false;
+    playingRef.current = false;
+    setPlaying(false);
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    const oldStream = videoRef.current.srcObject;
+    if (oldStream instanceof MediaStream) oldStream.getTracks().forEach(track => track.stop());
+    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
     videoRef.current.srcObject = null;
-    videoRef.current.src = URL.createObjectURL(file);
+    objectUrlRef.current = URL.createObjectURL(file);
+    videoRef.current.src = objectUrlRef.current;
     videoRef.current.muted = true;
-    setSourceName(file.name); setSourceKind("video"); setNote("Video loaded. Load the engine, then press Play to track.");
+    setSourceName(file.name); setSourceKind("video"); sourceKindRef.current = "video"; setNote("Video loaded. Load the engine, then press Play to track.");
     await videoRef.current.load();
     paint();
   }
@@ -123,10 +141,15 @@ export default function Studio() {
     if (!navigator.mediaDevices?.getUserMedia) { setNote("Camera access is unavailable in this browser."); return; }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false });
-      if (!videoRef.current) return;
-      videoRef.current.src = ""; videoRef.current.srcObject = stream; videoRef.current.muted = true;
+      if (!videoRef.current) { stream.getTracks().forEach(track => track.stop()); return; }
+      playingRef.current = false;
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      const oldStream = videoRef.current.srcObject;
+      if (oldStream instanceof MediaStream) oldStream.getTracks().forEach(track => track.stop());
+      if (objectUrlRef.current) { URL.revokeObjectURL(objectUrlRef.current); objectUrlRef.current = null; }
+      videoRef.current.pause(); videoRef.current.removeAttribute("src"); videoRef.current.srcObject = stream; videoRef.current.muted = true;
       await videoRef.current.play();
-      setSourceName("Live camera"); setSourceKind("camera"); setPlaying(true);
+      setSourceName("Live camera"); setSourceKind("camera"); sourceKindRef.current = "camera"; playingRef.current = true; setPlaying(true);
       setNote("Camera connected. Load the engine to detect people.");
       if (engine === "ready") startTracking();
     } catch (e) { setNote(`Camera error: ${e instanceof Error ? e.message : String(e)}`); }
@@ -135,7 +158,9 @@ export default function Studio() {
   function startTracking() {
     const video = videoRef.current;
     if (!video || !poseRef.current || !faceRef.current) { setNote("Load the capture engine and select a source first."); return; }
+    playingRef.current = true;
     setPlaying(true);
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
     const tick = () => {
       const v = videoRef.current, canvas = canvasRef.current;
       if (!v || !canvas || !poseRef.current || !faceRef.current) return;
@@ -146,7 +171,15 @@ export default function Studio() {
           const poseResult = poseRef.current.detectForVideo(v, timestamp);
           const faceResult = showFace ? faceRef.current.detectForVideo(v, timestamp) : null;
           const next: CapturePerson[] = (poseResult.landmarks || []).map((landmarks, i) => {
-            const cats = faceResult?.faceBlendshapes?.[i]?.categories || [];
+            const nose = landmarks[0];
+            let matchedFace = -1;
+            let nearestDistance = Number.POSITIVE_INFINITY;
+            (faceResult?.faceLandmarks || []).forEach((face, faceIndex) => {
+              if (!nose || !face[1]) return;
+              const distance = Math.hypot(nose.x - face[1].x, nose.y - face[1].y);
+              if (distance < nearestDistance) { nearestDistance = distance; matchedFace = faceIndex; }
+            });
+            const cats = matchedFace >= 0 ? (faceResult?.faceBlendshapes?.[matchedFace]?.categories || []) : [];
             return {
               id: i + 1,
               pose: landmarks.map(p => ({ x: p.x, y: p.y, visibility: p.visibility ?? 1 })),
@@ -154,14 +187,18 @@ export default function Studio() {
             };
           });
           setPeople(next);
-          if (recording) setMotionFrames(old => [...old, { t: v.currentTime, people: next }]);
+          if (recordingRef.current) {
+            const frame = { t: v.currentTime, people: next };
+            motionFramesRef.current = [...motionFramesRef.current, frame];
+            setMotionFrames(motionFramesRef.current);
+          }
           const ctx = canvas.getContext("2d");
           if (ctx) {
             const scale = Math.min(canvas.width / v.videoWidth, canvas.height / v.videoHeight);
             const dw = v.videoWidth * scale, dh = v.videoHeight * scale, ox = (canvas.width - dw) / 2, oy = (canvas.height - dh) / 2;
             ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.fillStyle = "#080e1a"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(v, ox, oy, dw, dh);
-            next.forEach((person, pi) => {
+            if (viewMode !== "skeleton") ctx.drawImage(v, ox, oy, dw, dh);
+            if (viewMode !== "source") next.forEach((person, pi) => {
               const color = ["#5cc8ff", "#c084fc", "#34d399", "#fbbf24", "#fb7185"][pi % 5];
               if (showBody) {
                 ctx.strokeStyle = color; ctx.lineWidth = 2.5;
@@ -174,11 +211,21 @@ export default function Studio() {
                 person.pose.forEach(p => { if (p.visibility >= poseConfidence) { ctx.beginPath(); ctx.arc(ox + p.x * dw, oy + p.y * dh, 3, 0, Math.PI * 2); ctx.fill(); } });
               }
               if (showIds) { const nose = person.pose[0]; if (nose) { ctx.fillStyle = color; ctx.font = "bold 13px system-ui"; ctx.fillText(`Person ${person.id}`, ox + nose.x * dw + 10, oy + nose.y * dh - 10); } }
+          });
+          if (showFace && viewMode !== "source" && faceResult?.faceLandmarks) {
+            ctx.fillStyle = "#f0abfc";
+            faceResult.faceLandmarks.forEach(face => face.forEach((p, index) => {
+              if (index % 4 !== 0) return;
+              ctx.beginPath(); ctx.arc(ox + p.x * dw, oy + p.y * dh, 1.25, 0, Math.PI * 2); ctx.fill();
+            }));
+          }
+          /* people overlays are drawn above the source frame */
+          if (viewMode === "source") { /* source-only mode intentionally hides tracking overlays */ }
             });
           }
         } catch (e) { setNote(`Tracking frame error: ${e instanceof Error ? e.message : String(e)}`); }
       } else paint();
-      if (playing && (sourceKind === "camera" || !v.paused)) rafRef.current = requestAnimationFrame(tick);
+      if (playingRef.current && (sourceKindRef.current === "camera" || !v.paused)) rafRef.current = requestAnimationFrame(tick);
     };
     if (sourceKind === "video") void video.play();
     rafRef.current = requestAnimationFrame(tick);
@@ -192,19 +239,37 @@ export default function Studio() {
   }
 
   function toggleRecord() {
-    if (!recording) { setMotionFrames([]); setRecording(true); setNote("Recording motion data…"); }
-    else {
-      setRecording(false); setNote(`Motion take saved in memory: ${motionFrames.length} frames. Export JSON to download it.`);
+    if (!recordingRef.current) {
+      if (engine !== "ready" || !sourceName || !playingRef.current) {
+        setNote("Load the engine, select a source, and start Play / Track before recording.");
+        return;
+      }
+      motionFramesRef.current = [];
+      setMotionFrames([]);
+      recordingRef.current = true;
+      setRecording(true);
+      setNote("Recording motion data…");
+    } else {
+      recordingRef.current = false;
+      setRecording(false);
+      setNote(`Motion take saved in memory: ${motionFramesRef.current.length} frames. Export JSON to download it.`);
     }
   }
 
   function exportMotion() {
-    const blob = new Blob([JSON.stringify({ format: "mocap-studio-motion-v1", source: sourceName, frames: motionFrames }, null, 2)], { type: "application/json" });
+    const frames = motionFramesRef.current;
+    if (frames.length === 0) {
+      setNote("Nothing to export yet. Start tracking, record a take, then export.");
+      return;
+    }
+    const blob = new Blob([JSON.stringify({ format: "mocap-studio-motion-v1", source: sourceName, frameCount: frames.length, frames }, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob); const a = document.createElement("a");
-    a.href = url; a.download = "mocap-motion-take.json"; a.click(); URL.revokeObjectURL(url);
+    a.href = url; a.download = "mocap-motion-take.json"; a.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setNote(`Exported ${frames.length} motion frames as JSON.`);
   }
 
-  useEffect(() => { paint(); }, [sourceName]);
+  useEffect(() => { paint(); }, [sourceName, viewMode]);
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -229,8 +294,8 @@ export default function Studio() {
         <div className="left-footer"><ShieldCheck size={14}/> Local inference · video stays in browser</div>
       </aside>
       <section className="center-panel">
-        <div className="viewport-toolbar"><label>View <select defaultValue="tracking"><option value="tracking">Source + Tracking</option><option value="source">Source only</option><option value="skeleton">Skeleton only</option></select></label><label className="check"><input type="checkbox" checked={showBody} onChange={e=>setShowBody(e.target.checked)}/> Body</label><label className="check"><input type="checkbox" checked={showFace} onChange={e=>setShowFace(e.target.checked)}/> Face</label><label className="check"><input type="checkbox" checked={showIds} onChange={e=>setShowIds(e.target.checked)}/> IDs</label><span className="source-status">{sourceName||"Waiting for source"}</span></div>
-        <div className="viewport"><video ref={videoRef} className="hidden-video" playsInline muted onLoadedMetadata={paint} onEnded={()=>{setPlaying(false);setNote("Video ended.");}}/><canvas ref={canvasRef} className="capture-canvas" /><div className="viewport-counters"><span>{sourceName?"SOURCE LOADED":"NO SOURCE"}</span><span>{people.length} PEOPLE</span></div>{!sourceName&&<div className="viewport-overlay"><div className="big-icon"><Activity size={26}/></div><strong>Ready to capture motion</strong><span>Load the engine, then import a video or connect your camera.</span></div>}</div>
+        <div className="viewport-toolbar"><label>View <select value={viewMode} onChange={e => setViewMode(e.target.value as "tracking" | "source" | "skeleton")}><option value="tracking">Source + Tracking</option><option value="source">Source only</option><option value="skeleton">Skeleton only</option></select></label><label className="check"><input type="checkbox" checked={showBody} onChange={e=>setShowBody(e.target.checked)}/> Body</label><label className="check"><input type="checkbox" checked={showFace} onChange={e=>setShowFace(e.target.checked)}/> Face</label><label className="check"><input type="checkbox" checked={showIds} onChange={e=>setShowIds(e.target.checked)}/> IDs</label><span className="source-status">{sourceName||"Waiting for source"}</span></div>
+        <div className="viewport"><video ref={videoRef} className="hidden-video" playsInline muted onLoadedMetadata={paint} onEnded={()=>{playingRef.current=false;setPlaying(false);setNote("Video ended.");}}/><canvas ref={canvasRef} className="capture-canvas" /><div className="viewport-counters"><span>{sourceName?"SOURCE LOADED":"NO SOURCE"}</span><span>{people.length} PEOPLE</span></div>{!sourceName&&<div className="viewport-overlay"><div className="big-icon"><Activity size={26}/></div><strong>Ready to capture motion</strong><span>Load the engine, then import a video or connect your camera.</span></div>}</div>
         <div className="transport"><button className="btn" onClick={playing?stopTracking:startTracking}>{playing?<Square size={14}/>:<Play size={14}/>} {playing?"Stop":"Play / Track"}</button><button className={`btn ${recording?"danger":""}`} onClick={toggleRecord}>{recording?<Square size={14}/>:<CircleHelp size={14}/>} {recording?"Stop Take":"Record Take"}</button><span className="transport-note">{note}</span></div>
         <div className="timeline"><div className="timeline-head"><strong>Timeline</strong><span>{motionFrames.length} captured frames</span></div><div className="ruler"><span>00:00</span><span>00:05</span><span>00:10</span><span>00:15</span><span>00:20</span></div><div className="track"><span>Body / face motion</span>{recording&&<i/>}</div></div>
       </section>
