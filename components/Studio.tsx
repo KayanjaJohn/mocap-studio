@@ -24,6 +24,10 @@ export default function Studio() {
   const faceRef = useRef<FaceLandmarker | null>(null);
   const rafRef = useRef<number | null>(null);
   const lastTimeRef = useRef(-1);
+  const lastInferenceAtRef = useRef(0);
+  const lastUiUpdateAtRef = useRef(0);
+  const lastFramesUiUpdateAtRef = useRef(0);
+  const inferenceCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const recordingRef = useRef(false);
   const playingRef = useRef(false);
   const sourceKindRef = useRef<"video" | "camera" | null>(null);
@@ -35,7 +39,7 @@ export default function Studio() {
   const [sourceKind, setSourceKind] = useState<"video" | "camera" | null>(null);
   const [playing, setPlaying] = useState(false);
   const [people, setPeople] = useState<CapturePerson[]>([]);
-  const [maxPeople, setMaxPeople] = useState("5");
+  const [maxPeople, setMaxPeople] = useState("2");
   const [showBody, setShowBody] = useState(true);
   const [showFace, setShowFace] = useState(true);
   const [showIds, setShowIds] = useState(true);
@@ -66,12 +70,9 @@ export default function Studio() {
     if (!ctx) return;
     const w = canvas.width, h = canvas.height;
     ctx.clearRect(0, 0, w, h);
+    if (viewMode !== "skeleton" && video.readyState >= 2 && video.videoWidth > 0) return;
     ctx.fillStyle = "#080e1a"; ctx.fillRect(0, 0, w, h);
-    if (viewMode !== "skeleton" && video.readyState >= 2 && video.videoWidth > 0) {
-      const scale = Math.min(w / video.videoWidth, h / video.videoHeight);
-      const dw = video.videoWidth * scale, dh = video.videoHeight * scale;
-      ctx.drawImage(video, (w - dw) / 2, (h - dh) / 2, dw, dh);
-    } else {
+    {
       ctx.strokeStyle = "#152238"; ctx.lineWidth = 1;
       for (let x = 0; x < w; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
       for (let y = 0; y < h; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
@@ -158,6 +159,8 @@ export default function Studio() {
     const video = videoRef.current;
     if (!video || !poseRef.current || !faceRef.current) { setNote("Load the capture engine and select a source first."); return; }
     playingRef.current = true;
+    lastInferenceAtRef.current = 0;
+    lastTimeRef.current = -1;
     setPlaying(true);
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     const tick = () => {
@@ -165,10 +168,26 @@ export default function Studio() {
       if (!v || !canvas || !poseRef.current || !faceRef.current) return;
       if (v.readyState >= 2 && v.currentTime !== lastTimeRef.current) {
         lastTimeRef.current = v.currentTime;
-        const timestamp = performance.now();
+        const now = performance.now();
+        // Cap expensive inference to ~15 FPS; keep browser video playback at its native rate.
+        if (now - lastInferenceAtRef.current < 66) {
+          if (playingRef.current) rafRef.current = requestAnimationFrame(tick);
+          return;
+        }
+        lastInferenceAtRef.current = now;
+        const timestamp = now;
         try {
-          const poseResult = poseRef.current.detectForVideo(v, timestamp);
-          const faceResult = showFace ? faceRef.current.detectForVideo(v, timestamp) : null;
+          // Infer on a downscaled copy instead of running both models on 1080p/4K frames.
+          let inferenceCanvas = inferenceCanvasRef.current;
+          if (!inferenceCanvas) { inferenceCanvas = document.createElement("canvas"); inferenceCanvasRef.current = inferenceCanvas; }
+          const inferenceScale = Math.min(1, 640 / v.videoWidth, 640 / v.videoHeight);
+          inferenceCanvas.width = Math.max(1, Math.round(v.videoWidth * inferenceScale));
+          inferenceCanvas.height = Math.max(1, Math.round(v.videoHeight * inferenceScale));
+          const inferenceContext = inferenceCanvas.getContext("2d");
+          if (!inferenceContext) throw new Error("Could not create the motion inference canvas.");
+          inferenceContext.drawImage(v, 0, 0, inferenceCanvas.width, inferenceCanvas.height);
+          const poseResult = poseRef.current.detectForVideo(inferenceCanvas, timestamp);
+          const faceResult = showFace ? faceRef.current.detectForVideo(inferenceCanvas, timestamp) : null;
           const next: CapturePerson[] = (poseResult.landmarks || []).map((landmarks, i) => {
             const nose = landmarks[0];
             let matchedFace = -1;
@@ -185,18 +204,25 @@ export default function Studio() {
               faceBlendshapes: Object.fromEntries(cats.map(c => [c.categoryName, c.score]))
             };
           });
-          setPeople(next);
+          // Avoid forcing a full React render on every inference frame.
+          if (now - lastUiUpdateAtRef.current >= 200) {
+            setPeople(next);
+            lastUiUpdateAtRef.current = now;
+          }
           if (recordingRef.current) {
-            const frame = { t: v.currentTime, people: next };
-            motionFramesRef.current = [...motionFramesRef.current, frame];
-            setMotionFrames(motionFramesRef.current);
+            motionFramesRef.current.push({ t: v.currentTime, people: next });
+            if (now - lastFramesUiUpdateAtRef.current >= 500) {
+              setMotionFrames([...motionFramesRef.current]);
+              lastFramesUiUpdateAtRef.current = now;
+            }
           }
           const ctx = canvas.getContext("2d");
           if (ctx) {
             const scale = Math.min(canvas.width / v.videoWidth, canvas.height / v.videoHeight);
             const dw = v.videoWidth * scale, dh = v.videoHeight * scale, ox = (canvas.width - dw) / 2, oy = (canvas.height - dh) / 2;
-            ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.fillStyle = "#080e1a"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-            if (viewMode !== "skeleton") ctx.drawImage(v, ox, oy, dw, dh);
+            // The original video is rendered by the browser at native playback speed;
+            // this transparent canvas only draws tracking overlays.
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
             if (viewMode !== "source") next.forEach((person, pi) => {
               const color = ["#5cc8ff", "#c084fc", "#34d399", "#fbbf24", "#fb7185"][pi % 5];
               if (showBody) {
@@ -221,7 +247,7 @@ export default function Studio() {
           /* Source-only mode intentionally hides tracking overlays. */
           }
         } catch (e) { setNote(`Tracking frame error: ${e instanceof Error ? e.message : String(e)}`); }
-      } else paint();
+      }
       if (playingRef.current && (sourceKindRef.current === "camera" || !v.paused)) rafRef.current = requestAnimationFrame(tick);
     };
     if (sourceKind === "video") void video.play();
@@ -256,6 +282,7 @@ export default function Studio() {
     } else {
       recordingRef.current = false;
       setRecording(false);
+      setMotionFrames([...motionFramesRef.current]);
       setNote(`Motion take saved in memory: ${motionFramesRef.current.length} frames. Export JSON to download it.`);
     }
   }
@@ -299,12 +326,12 @@ export default function Studio() {
       </aside>
       <section className="center-panel">
         <div className="viewport-toolbar"><label>View <select value={viewMode} onChange={e => setViewMode(e.target.value as "tracking" | "source" | "skeleton")}><option value="tracking">Source + Tracking</option><option value="source">Source only</option><option value="skeleton">Skeleton only</option></select></label><label className="check"><input type="checkbox" checked={showBody} onChange={e=>setShowBody(e.target.checked)}/> Body</label><label className="check"><input type="checkbox" checked={showFace} onChange={e=>setShowFace(e.target.checked)}/> Face</label><label className="check"><input type="checkbox" checked={showIds} onChange={e=>setShowIds(e.target.checked)}/> IDs</label><span className="source-status">{sourceName||"Waiting for source"}</span></div>
-        <div className="viewport"><video ref={videoRef} className="hidden-video" playsInline muted onLoadedMetadata={paint} onEnded={()=>{playingRef.current=false;setPlaying(false);setNote("Video ended.");}}/><canvas ref={canvasRef} className="capture-canvas" /><div className="viewport-counters"><span>{sourceName?"SOURCE LOADED":"NO SOURCE"}</span><span>{people.length} PEOPLE</span></div>{!sourceName&&<div className="viewport-overlay"><div className="big-icon"><Activity size={26}/></div><strong>Ready to capture motion</strong><span>Load the engine, then import a video or connect your camera.</span></div>}</div>
+        <div className="viewport"><video ref={videoRef} className="hidden-video" style={{opacity:viewMode==="skeleton"?0:1}} playsInline muted onLoadedMetadata={paint} onEnded={()=>{playingRef.current=false;setPlaying(false);setNote("Video ended.");}}/><canvas ref={canvasRef} className="capture-canvas" /><div className="viewport-counters"><span>{sourceName?"SOURCE LOADED":"NO SOURCE"}</span><span>{people.length} PEOPLE</span></div>{!sourceName&&<div className="viewport-overlay"><div className="big-icon"><Activity size={26}/></div><strong>Ready to capture motion</strong><span>Load the engine, then import a video or connect your camera.</span></div>}</div>
         <div className="transport"><button className="btn" onClick={playing?stopTracking:startTracking}>{playing?<Square size={14}/>:<Play size={14}/>} {playing?"Stop":"Play / Track"}</button><button className={`btn ${recording?"danger":""}`} onClick={toggleRecord}>{recording?<Square size={14}/>:<CircleHelp size={14}/>} {recording?"Stop Take":"Record Take"}</button><span className="transport-note">{note}</span></div>
         <div className="timeline"><div className="timeline-head"><strong>Timeline</strong><span>{motionFrames.length} captured frames</span></div><div className="ruler"><span>00:00</span><span>00:05</span><span>00:10</span><span>00:15</span><span>00:20</span></div><div className="track"><span>Body / face motion</span>{recording&&<i/>}</div></div>
       </section>
       <aside className="right-panel"><div className="panel-heading">PROPERTIES <span>{activeTab.toUpperCase()}</span></div><section className="section"><h3>Detection</h3><label className="range-label">Body confidence <b>{poseConfidence.toFixed(2)}</b></label><input className="range" type="range" min=".1" max=".95" step=".05" value={poseConfidence} onChange={e=>setPoseConfidence(Number(e.target.value))}/><label className="range-label">Face confidence <b>{faceConfidence.toFixed(2)}</b></label><input className="range" type="range" min=".1" max=".95" step=".05" value={faceConfidence} onChange={e=>setFaceConfidence(Number(e.target.value))}/><label className="field-label">Maximum people</label><select className="wide-select" value={maxPeople} onChange={e=>setMaxPeople(e.target.value)}><option value="1">1 person</option><option value="2">2 people</option><option value="3">3 people</option><option value="4">4 people</option><option value="5">5 people</option><option value="8">8 people</option></select><button className="btn wide" onClick={()=>{if(engine==="ready"){poseRef.current?.close();faceRef.current?.close();setEngine("idle");setEngineMessage("Reload engine to apply detection settings.");}setNote("Detection settings saved for the next engine load.");}}><Settings2 size={14}/> Apply Detection Settings</button></section><section className="section"><h3>Capture Engine</h3><div className={`engine-card ${engine}`}><div className="engine-dot"/><div><strong>{topStatus}</strong><span>{engineMessage}</span></div></div><div className="notice">Stage 1: body landmarks and face blendshapes. The tracking runtime and model assets must be installed locally for this to run without external CDN imports.</div></section><section className="section"><h3>Next stages</h3><div className="feature"><Layers size={16}/><span>3D avatar rig mapping</span><small>Stage 2</small></div><div className="feature"><ScanFace size={16}/><span>Facial blendshape retargeting</span><small>Stage 2</small></div><div className="feature"><Video size={16}/><span>Rendered video export</span><small>Stage 3</small></div><div className="feature"><FolderOpen size={16}/><span>Save projects to Supabase</span><small>Stage 3</small></div></section></aside>
     </div>
-    <footer className="statusbar"><span><span className="green-dot"/> Browser-local inference</span><span><Gauge size={13}/> Capture at source frame rate</span><span><Sparkles size={13}/> MoCap Studio · Stage 1 foundation</span></footer>
+    <footer className="statusbar"><span><span className="green-dot"/> Browser-local inference</span><span><Gauge size={13}/> Optimized inference · up to 15 FPS</span><span><Sparkles size={13}/> MoCap Studio · Stage 1 foundation</span></footer>
   </main>;
 }
