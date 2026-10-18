@@ -21,13 +21,13 @@ Open http://localhost:3000.
 
 ## Important: install MediaPipe runtime assets locally
 
-The application intentionally does **not** import MediaPipe from browser CDNs. Download the assets matching the installed `@mediapipe/tasks-vision` version and put them at these paths:
+The application intentionally does **not** import MediaPipe from browser CDNs. Before a production build, `npm run build` runs `scripts/prepare-mediapipe.mjs`: it copies the WASM runtime from the installed package and downloads the official pose and face model files into the paths below. This lets cloud deployment providers such as Vercel prepare the assets during the build instead of requiring you to upload large binary files manually. You can also run `npm run prepare:mediapipe` explicitly.
 
 - `public/mediapipe/wasm/` — all WASM runtime files from the package's `wasm` directory
 - `public/models/pose_landmarker_lite.task` — Pose Landmarker Lite model
 - `public/models/face_landmarker.task` — Face Landmarker model
 
-The runtime package is installed from npm. To copy the WASM files after `npm install`, on macOS/Linux:
+The runtime package is installed from npm. To prepare the WASM files manually after `npm install`, on macOS/Linux:
 
 ```bash
 mkdir -p public/mediapipe/wasm public/models
@@ -41,7 +41,7 @@ New-Item -ItemType Directory -Force public/mediapipe/wasm, public/models
 Copy-Item node_modules/@mediapipe/tasks-vision/wasm/* public/mediapipe/wasm/ -Recurse -Force
 ```
 
-Download the two `.task` models from the official MediaPipe model-hosting pages and save them under `public/models/` with the exact filenames above. Model files are not checked into this starter archive.
+The preparation script downloads the official MediaPipe model files automatically. A successful build requires outbound network access to the official Google MediaPipe model host. The binary assets are generated during build and are intentionally not committed to Git.
 
 ## Supabase
 

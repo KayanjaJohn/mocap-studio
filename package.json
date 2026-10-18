@@ -4,9 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "npm run prepare:mediapipe && next build",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "prepare:mediapipe": "node scripts/prepare-mediapipe.mjs"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.22",
