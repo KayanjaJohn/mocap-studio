@@ -70,12 +70,9 @@ export default function Studio() {
     if (!ctx) return;
     const w = canvas.width, h = canvas.height;
     ctx.clearRect(0, 0, w, h);
+    if (viewMode !== "skeleton" && video.readyState >= 2 && video.videoWidth > 0) return;
     ctx.fillStyle = "#080e1a"; ctx.fillRect(0, 0, w, h);
-    if (viewMode !== "skeleton" && video.readyState >= 2 && video.videoWidth > 0) {
-      const scale = Math.min(w / video.videoWidth, h / video.videoHeight);
-      const dw = video.videoWidth * scale, dh = video.videoHeight * scale;
-      ctx.drawImage(video, (w - dw) / 2, (h - dh) / 2, dw, dh);
-    } else {
+    {
       ctx.strokeStyle = "#152238"; ctx.lineWidth = 1;
       for (let x = 0; x < w; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
       for (let y = 0; y < h; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
@@ -223,8 +220,9 @@ export default function Studio() {
           if (ctx) {
             const scale = Math.min(canvas.width / v.videoWidth, canvas.height / v.videoHeight);
             const dw = v.videoWidth * scale, dh = v.videoHeight * scale, ox = (canvas.width - dw) / 2, oy = (canvas.height - dh) / 2;
-            ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.fillStyle = "#080e1a"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-            if (viewMode !== "skeleton") ctx.drawImage(v, ox, oy, dw, dh);
+            // The original video is rendered by the browser at native playback speed;
+            // this transparent canvas only draws tracking overlays.
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
             if (viewMode !== "source") next.forEach((person, pi) => {
               const color = ["#5cc8ff", "#c084fc", "#34d399", "#fbbf24", "#fb7185"][pi % 5];
               if (showBody) {
@@ -328,7 +326,7 @@ export default function Studio() {
       </aside>
       <section className="center-panel">
         <div className="viewport-toolbar"><label>View <select value={viewMode} onChange={e => setViewMode(e.target.value as "tracking" | "source" | "skeleton")}><option value="tracking">Source + Tracking</option><option value="source">Source only</option><option value="skeleton">Skeleton only</option></select></label><label className="check"><input type="checkbox" checked={showBody} onChange={e=>setShowBody(e.target.checked)}/> Body</label><label className="check"><input type="checkbox" checked={showFace} onChange={e=>setShowFace(e.target.checked)}/> Face</label><label className="check"><input type="checkbox" checked={showIds} onChange={e=>setShowIds(e.target.checked)}/> IDs</label><span className="source-status">{sourceName||"Waiting for source"}</span></div>
-        <div className="viewport"><video ref={videoRef} className="hidden-video" playsInline muted onLoadedMetadata={paint} onEnded={()=>{playingRef.current=false;setPlaying(false);setNote("Video ended.");}}/><canvas ref={canvasRef} className="capture-canvas" /><div className="viewport-counters"><span>{sourceName?"SOURCE LOADED":"NO SOURCE"}</span><span>{people.length} PEOPLE</span></div>{!sourceName&&<div className="viewport-overlay"><div className="big-icon"><Activity size={26}/></div><strong>Ready to capture motion</strong><span>Load the engine, then import a video or connect your camera.</span></div>}</div>
+        <div className="viewport"><video ref={videoRef} className="hidden-video" style={{opacity:viewMode==="skeleton"?0:1}} playsInline muted onLoadedMetadata={paint} onEnded={()=>{playingRef.current=false;setPlaying(false);setNote("Video ended.");}}/><canvas ref={canvasRef} className="capture-canvas" /><div className="viewport-counters"><span>{sourceName?"SOURCE LOADED":"NO SOURCE"}</span><span>{people.length} PEOPLE</span></div>{!sourceName&&<div className="viewport-overlay"><div className="big-icon"><Activity size={26}/></div><strong>Ready to capture motion</strong><span>Load the engine, then import a video or connect your camera.</span></div>}</div>
         <div className="transport"><button className="btn" onClick={playing?stopTracking:startTracking}>{playing?<Square size={14}/>:<Play size={14}/>} {playing?"Stop":"Play / Track"}</button><button className={`btn ${recording?"danger":""}`} onClick={toggleRecord}>{recording?<Square size={14}/>:<CircleHelp size={14}/>} {recording?"Stop Take":"Record Take"}</button><span className="transport-note">{note}</span></div>
         <div className="timeline"><div className="timeline-head"><strong>Timeline</strong><span>{motionFrames.length} captured frames</span></div><div className="ruler"><span>00:00</span><span>00:05</span><span>00:10</span><span>00:15</span><span>00:20</span></div><div className="track"><span>Body / face motion</span>{recording&&<i/>}</div></div>
       </section>
