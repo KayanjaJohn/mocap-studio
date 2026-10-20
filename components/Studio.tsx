@@ -221,7 +221,7 @@ export default function Studio() {
   function startTracking() {
     const video = videoRef.current;
     if (!video || !sourceName) { setNote("Import a video or connect your camera first."); return; }
-    if (!poseRef.current || !faceRef.current) {
+    if (!poseRef.current || (showFace && !faceRef.current)) {
       if (sourceKindRef.current === "video") {
         playingRef.current = true;
         setPlaying(true);
