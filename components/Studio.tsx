@@ -12,8 +12,16 @@ type EngineState = "idle" | "loading" | "ready" | "error";
 type CapturePerson = { id: number; pose: { x: number; y: number; visibility: number }[]; faceBlendshapes: Record<string, number> };
 
 const POSE_CONNECTIONS: [number, number][] = [
-  [11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],
-  [23,25],[25,27],[27,31],[24,26],[26,28],[28,32],[15,17],[15,19],[15,21],[16,18],[16,20],[16,22]
+  // Face outline and features available in the 33-point pose model
+  [0,1],[1,2],[2,3],[3,7],[0,4],[4,5],[5,6],[6,8],[9,10],
+  // Shoulders, arms, wrists and hand landmarks
+  [11,12],[11,13],[13,15],[12,14],[14,16],
+  [15,17],[15,19],[15,21],[17,19],[16,18],[16,20],[16,22],[18,20],
+  // Torso and hips
+  [11,23],[12,24],[23,24],
+  // Legs, ankles, heels and foot tips
+  [23,25],[25,27],[27,29],[29,31],[27,31],
+  [24,26],[26,28],[28,30],[30,32],[28,32]
 ];
 
 export default function Studio() {
@@ -48,8 +56,8 @@ export default function Studio() {
   const [showBody, setShowBody] = useState(true);
   const [showFace, setShowFace] = useState(false);
   const [showIds, setShowIds] = useState(true);
-  const [poseConfidence, setPoseConfidence] = useState(0.55);
-  const [faceConfidence, setFaceConfidence] = useState(0.5);
+  const [poseConfidence, setPoseConfidence] = useState(0.35);
+  const [faceConfidence, setFaceConfidence] = useState(0.35);
   const [motionFrames, setMotionFrames] = useState<{ t: number; people: CapturePerson[] }[]>([]);
   const [viewMode, setViewMode] = useState<"tracking" | "source" | "skeleton">("tracking");
   const [recording, setRecording] = useState(false);
@@ -292,22 +300,30 @@ export default function Studio() {
             if (viewMode !== "source") next.forEach((person, pi) => {
               const color = ["#5cc8ff", "#c084fc", "#34d399", "#fbbf24", "#fb7185"][pi % 5];
               if (showBody) {
-                ctx.strokeStyle = color; ctx.lineWidth = 2.5;
+                ctx.strokeStyle = color; ctx.lineWidth = Math.max(2.5, 1.8 * window.devicePixelRatio);
                 POSE_CONNECTIONS.forEach(([a,b]) => {
                   const p = person.pose[a], q = person.pose[b];
                   if (!p || !q || p.visibility < poseConfidence || q.visibility < poseConfidence) return;
                   ctx.beginPath(); ctx.moveTo(ox + p.x * dw, oy + p.y * dh); ctx.lineTo(ox + q.x * dw, oy + q.y * dh); ctx.stroke();
                 });
                 ctx.fillStyle = color;
-                person.pose.forEach(p => { if (p.visibility >= poseConfidence) { ctx.beginPath(); ctx.arc(ox + p.x * dw, oy + p.y * dh, 3, 0, Math.PI * 2); ctx.fill(); } });
+                ctx.strokeStyle = "#f4f8ff";
+                person.pose.forEach(p => {
+                  if (p.visibility < poseConfidence) return;
+                  ctx.beginPath();
+                  ctx.arc(ox + p.x * dw, oy + p.y * dh, Math.max(3, 2 * window.devicePixelRatio), 0, Math.PI * 2);
+                  ctx.fill();
+                  ctx.lineWidth = Math.max(1, window.devicePixelRatio);
+                  ctx.stroke();
+                });
               }
               if (showIds) { const nose = person.pose[0]; if (nose) { ctx.fillStyle = color; ctx.font = "bold 13px system-ui"; ctx.fillText(`Person ${person.id}`, ox + nose.x * dw + 10, oy + nose.y * dh - 10); } }
           });
           if (showFace && viewMode !== "source" && faceResult?.faceLandmarks) {
             ctx.fillStyle = "#f0abfc";
             faceResult.faceLandmarks.forEach(face => face.forEach((p, index) => {
-              if (index % 4 !== 0) return;
-              ctx.beginPath(); ctx.arc(ox + p.x * dw, oy + p.y * dh, 1.25, 0, Math.PI * 2); ctx.fill();
+              if (index % 2 !== 0) return;
+              ctx.beginPath(); ctx.arc(ox + p.x * dw, oy + p.y * dh, Math.max(1.25, 1.25 * window.devicePixelRatio), 0, Math.PI * 2); ctx.fill();
             }));
           }
           /* Source-only mode intentionally hides tracking overlays. */
@@ -396,7 +412,7 @@ export default function Studio() {
         <div className="transport"><button className="btn" onClick={playing?stopTracking:startTracking} disabled={!sourceName}>{playing?<Square size={14}/>:<Play size={14}/>} {playing?"Pause / Stop":"Play / Track"}</button><button className="btn" onClick={()=>seekTo(currentTime-5)} disabled={!duration}><SkipBack size={14}/> 5s</button><button className="btn" onClick={()=>seekTo(currentTime+5)} disabled={!duration}>5s <SkipForward size={14}/></button><label className="speed-control">Speed <select value={playbackRate} onChange={e=>setRate(Number(e.target.value))} disabled={sourceKind!=="video"}><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1">1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></label><button className={`btn ${recording?"danger":""}`} onClick={toggleRecord}>{recording?<Square size={14}/>:<CircleHelp size={14}/>} {recording?"Stop Take":"Record Take"}</button><span className="transport-note">{note}</span></div>
         <div className="timeline"><div className="timeline-head"><strong>{activeTab==="Cut"?"Cut & Trim Timeline":"Timeline"}</strong><span>{formatTime(currentTime)} / {formatTime(duration)} · {motionFrames.length} motion frames</span></div><input aria-label="Seek video timeline" className="timeline-seek" type="range" min="0" max={Math.max(duration,0.01)} step="0.01" value={Math.min(currentTime,Math.max(duration,0.01))} onChange={e=>seekTo(Number(e.target.value))} disabled={!duration||sourceKind!=="video"}/><div className="ruler"><span>00:00</span><span>{formatTime(duration*.25)}</span><span>{formatTime(duration*.5)}</span><span>{formatTime(duration*.75)}</span><span>{formatTime(duration)}</span></div><div className="track"><span>Source video · {sourceName||"No clip"}</span>{duration>0&&<i style={{left:(trimStart/duration*100)+"%",width:(Math.max(0,(trimEnd-trimStart)/duration*100))+"%"}}/>}</div>{activeTab==="Cut"&&<div className="timeline-trim"><span>IN <b>{formatTime(trimStart)}</b></span><button className="btn" onClick={markTrimStart} disabled={!duration}>Set In at Playhead</button><button className="btn" onClick={markTrimEnd} disabled={!duration}>Set Out at Playhead</button><button className="btn" onClick={resetTrim} disabled={!duration}>Reset</button><span>OUT <b>{formatTime(trimEnd)}</b></span></div>}</div>
       </section>
-      <aside className="right-panel"><div className="panel-heading">PROPERTIES <span>{activeTab.toUpperCase()}</span></div><section className="section"><h3>Detection</h3><label className="toggle-line"><input type="checkbox" checked={showFace} onChange={e=>{setShowFace(e.target.checked);setNote("Face tracking preference changed. Click Apply Detection Settings to reload the engine with this option.");}}/><span>Enable face tracking <small>Uses extra processing</small></span></label><label className="range-label">Body confidence <b>{poseConfidence.toFixed(2)}</b></label><input className="range" type="range" min=".1" max=".95" step=".05" value={poseConfidence} onChange={e=>setPoseConfidence(Number(e.target.value))}/><label className="range-label">Face confidence <b>{faceConfidence.toFixed(2)}</b></label><input className="range" type="range" min=".1" max=".95" step=".05" value={faceConfidence} onChange={e=>setFaceConfidence(Number(e.target.value))}/><label className="field-label">Maximum people</label><select className="wide-select" value={maxPeople} onChange={e=>setMaxPeople(e.target.value)}><option value="1">1 person</option><option value="2">2 people</option><option value="3">3 people</option><option value="4">4 people</option><option value="5">5 people</option><option value="8">8 people</option></select><button className="btn wide" onClick={()=>{if(engine==="ready"){poseRef.current?.close();faceRef.current?.close();setEngine("idle");setEngineMessage("Reload engine to apply detection settings.");}setNote("Detection settings saved for the next engine load.");}}><Settings2 size={14}/> Apply Detection Settings</button></section><section className="section"><h3>Capture Engine</h3><div className={`engine-card ${engine}`}><div className="engine-dot"/><div><strong>{topStatus}</strong><span>{engineMessage}</span></div></div><div className="notice">Fast mode loads body tracking only. Enable face tracking in Detection settings when facial landmarks and blendshapes are needed; this loads a second model and can reduce performance on lower-powered devices.</div></section><section className="section"><h3>Next stages</h3><div className="feature"><Layers size={16}/><span>3D avatar rig mapping</span><small>Stage 2</small></div><div className="feature"><ScanFace size={16}/><span>Facial blendshape retargeting</span><small>Stage 2</small></div><div className="feature"><Video size={16}/><span>Rendered video export</span><small>Stage 3</small></div><div className="feature"><FolderOpen size={16}/><span>Save projects to Supabase</span><small>Stage 3</small></div></section></aside>
+      <aside className="right-panel"><div className="panel-heading">PROPERTIES <span>{activeTab.toUpperCase()}</span></div><section className="section"><h3>Detection</h3><label className="toggle-line"><input type="checkbox" checked={showFace} onChange={e=>{setShowFace(e.target.checked);setNote("Face tracking preference changed. Click Apply Detection Settings to reload the engine with this option.");}}/><span>Enable face tracking <small>Uses extra processing</small></span></label><label className="range-label">Body sensitivity <b>{poseConfidence.toFixed(2)}</b></label><input className="range" type="range" min=".1" max=".95" step=".05" value={poseConfidence} onChange={e=>setPoseConfidence(Number(e.target.value))}/><p className="range-help">Lower values detect more uncertain or partly obscured joints. Higher values filter out weaker detections.</p><label className="range-label">Face sensitivity <b>{faceConfidence.toFixed(2)}</b></label><input className="range" type="range" min=".1" max=".95" step=".05" value={faceConfidence} onChange={e=>setFaceConfidence(Number(e.target.value))}/><label className="field-label">Maximum people</label><select className="wide-select" value={maxPeople} onChange={e=>setMaxPeople(e.target.value)}><option value="1">1 person</option><option value="2">2 people</option><option value="3">3 people</option><option value="4">4 people</option><option value="5">5 people</option><option value="8">8 people</option></select><button className="btn wide" onClick={()=>{if(engine==="ready"){poseRef.current?.close();faceRef.current?.close();setEngine("idle");setEngineMessage("Reload engine to apply detection settings.");}setNote("Detection settings saved for the next engine load.");}}><Settings2 size={14}/> Apply Detection Settings</button></section><section className="section"><h3>Capture Engine</h3><div className={`engine-card ${engine}`}><div className="engine-dot"/><div><strong>{topStatus}</strong><span>{engineMessage}</span></div></div><div className="notice">Higher body sensitivity and the expanded skeleton overlay help reveal more landmarks. The lightweight pose model tracks 33 body points; detailed finger articulation requires a dedicated hand model. Face tracking loads a second model and can reduce performance on lower-powered devices.</div></section><section className="section"><h3>Next stages</h3><div className="feature"><Layers size={16}/><span>3D avatar rig mapping</span><small>Stage 2</small></div><div className="feature"><ScanFace size={16}/><span>Facial blendshape retargeting</span><small>Stage 2</small></div><div className="feature"><Video size={16}/><span>Rendered video export</span><small>Stage 3</small></div><div className="feature"><FolderOpen size={16}/><span>Save projects to Supabase</span><small>Stage 3</small></div></section></aside>
     </div>
     <footer className="statusbar"><span><span className="green-dot"/> Browser-local inference</span><span><Gauge size={13}/> Body-first inference · up to 15 FPS</span><span><Sparkles size={13}/> MoCap Studio · Stage 1 foundation</span></footer>
   </main>;
