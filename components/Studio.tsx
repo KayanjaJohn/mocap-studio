@@ -44,7 +44,7 @@ export default function Studio() {
   const objectUrlRef = useRef<string | null>(null);\n  const motionPlaybackTimerRef = useRef<number | null>(null);
   const [engine, setEngine] = useState<EngineState>("idle");
   const [engineMessage, setEngineMessage] = useState("Capture engine not loaded");
-  const [sourceName, setSourceName] = useState("");
+  const [sourceName, setSourceName] = useState("");\n  const [takeSourceName, setTakeSourceName] = useState("");
   const [sourceKind, setSourceKind] = useState<"video" | "camera" | null>(null);
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
@@ -492,7 +492,7 @@ export default function Studio() {
       setNote("The selected trim range contains no recorded motion frames. Adjust the In/Out points first.");
       return;
     }
-    const blob = new Blob([JSON.stringify({ format: "mocap-studio-motion-v1", source: sourceName, sourceDuration: duration, trim: { start: trimStart, end: Number.isFinite(end) ? end : (allFrames[allFrames.length - 1]?.t ?? 0) }, playbackRate, frameCount: frames.length, frames }, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify({ format: "mocap-studio-motion-v1", source: sourceName || takeSourceName, sourceDuration: duration, trim: { start: trimStart, end: Number.isFinite(end) ? end : (allFrames[allFrames.length - 1]?.t ?? 0) }, playbackRate, frameCount: frames.length, frames }, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob); const a = document.createElement("a");
     a.href = url; a.download = "mocap-motion-take.json"; a.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
