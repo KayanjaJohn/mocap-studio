@@ -519,28 +519,39 @@ export default function Studio() {
   function playRecordedTake() {
     if (!motionFramesRef.current.length) { setNote("Import a motion JSON take first."); return; }
     if (motionPlaybackTimerRef.current !== null) window.clearInterval(motionPlaybackTimerRef.current);
-    const lastTime = Math.max(trimEnd || duration || 0, motionFramesRef.current[motionFramesRef.current.length - 1]?.t || 0);
-    if (currentTime >= lastTime) setCurrentTime(trimStart);
+    const lastFrameTime = motionFramesRef.current[motionFramesRef.current.length - 1]?.t || 0;
+    const lastTime = Math.min(trimEnd || duration || lastFrameTime, lastFrameTime || duration || 0);
+    if (currentTime >= lastTime) {
+      if (sourceKindRef.current === "video" && videoRef.current) videoRef.current.currentTime = trimStart;
+      setCurrentTime(trimStart);
+    }
     playingRef.current = true;
     setPlaying(true);
     let previous = performance.now();
+    const sourceVideo = sourceKindRef.current === "video" ? videoRef.current : null;
+    if (sourceVideo) {
+      sourceVideo.playbackRate = playbackRate;
+      if (sourceVideo.currentTime < trimStart || sourceVideo.currentTime >= lastTime) sourceVideo.currentTime = trimStart;
+      void sourceVideo.play().catch(() => setNote("Could not play the source video. Tap Play again to retry."));
+    }
     motionPlaybackTimerRef.current = window.setInterval(() => {
       const now = performance.now();
       const delta = (now - previous) / 1000 * playbackRate;
       previous = now;
       setCurrentTime(current => {
-        const next = current + delta;
+        const next = sourceVideo ? sourceVideo.currentTime : current + delta;
         if (next >= lastTime) {
           if (motionPlaybackTimerRef.current !== null) window.clearInterval(motionPlaybackTimerRef.current);
           motionPlaybackTimerRef.current = null;
           playingRef.current = false;
           setPlaying(false);
+          sourceVideo?.pause();
           return lastTime;
         }
         return next;
       });
     }, 33);
-    setNote("Playing recorded motion take.");
+    setNote(sourceVideo ? "Playing recorded motion over the source video." : "Playing recorded motion take.");
   }
 
   function stopTracking() {
