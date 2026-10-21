@@ -685,6 +685,26 @@ export default function Studio() {
 
   useEffect(() => { paint(); }, [sourceName, viewMode]);
   useEffect(() => { drawRecordedFrame(currentTime); }, [currentTime, showBody, showIds, viewMode, poseConfidence, engine, greenScreenEnabled, keyColor, keyTolerance, backgroundColor, backgroundName]);
+
+  useEffect(() => {
+    if (!greenScreenEnabled || engine === "ready" || !sourceName) return;
+    let frameId = 0;
+    const renderPreview = () => {
+      const canvas = canvasRef.current;
+      const video = videoRef.current;
+      const ctx = canvas?.getContext("2d");
+      if (canvas && video && ctx && video.readyState >= 2 && video.videoWidth > 0 && viewMode !== "skeleton") {
+        const scale = Math.min(canvas.width / video.videoWidth, canvas.height / video.videoHeight);
+        const dw = video.videoWidth * scale, dh = video.videoHeight * scale;
+        const ox = (canvas.width - dw) / 2, oy = (canvas.height - dh) / 2;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        compositeGreenScreen(ctx, video, ox, oy, dw, dh);
+      }
+      frameId = requestAnimationFrame(renderPreview);
+    };
+    frameId = requestAnimationFrame(renderPreview);
+    return () => cancelAnimationFrame(frameId);
+  }, [greenScreenEnabled, engine, sourceName, keyColor, keyTolerance, backgroundColor, backgroundName, viewMode]);
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
