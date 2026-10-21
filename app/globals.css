@@ -14,3 +14,10 @@
 .saved-project-open strong{width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:#e6eefb}
 .saved-project-open span{font-size:9px;color:#8da1bd}
 .delete-project{align-self:center;margin-right:6px;width:26px;height:26px;justify-content:center;color:#fb7185;font-size:17px}
+
+
+.green-screen-panel h3{display:flex;align-items:center;gap:7px}
+.background-color-row{display:flex;align-items:center;gap:9px;margin:6px 0 10px;padding:7px 9px;border:1px solid var(--border);border-radius:7px;background:#0a1321}
+.background-color-row input[type=color]{width:32px;height:28px;padding:2px;border:0;background:transparent;cursor:pointer}
+.background-color-row span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11px}
+.green-screen-panel .range-help{line-height:1.5}
