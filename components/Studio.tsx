@@ -159,6 +159,10 @@ export default function Studio() {
     setSourceName("");
     setSourceKind(null);
     sourceKindRef.current = null;
+    videoRef.current?.pause();
+    videoRef.current?.removeAttribute("src");
+    videoRef.current?.load();
+    if (objectUrlRef.current) { URL.revokeObjectURL(objectUrlRef.current); objectUrlRef.current = null; }
     setNote(`Opened “${project.name}”. Import the matching video separately if you want the motion overlaid on the original footage.`);
     window.setTimeout(() => drawRecordedFrame(project.frames[0].t), 0);
     setCurrentTime(project.frames[0].t);
@@ -306,6 +310,8 @@ export default function Studio() {
       if (!frames.length) throw new Error("No valid motion frames were found in this file.");
       motionFramesRef.current = frames;
       setMotionFrames(frames);
+      setCurrentProjectId(null);
+      setProjectName(file.name.replace(/\.json$/i, ""));
       setTrimStart(Math.max(0, Number(take.trim?.start) || 0));
       setTrimEnd(Math.max(0, Number(take.trim?.end) || Number(take.sourceDuration) || 0));
       if (Number.isFinite(take.playbackRate) && Number(take.playbackRate) > 0) setRate(Number(take.playbackRate));
