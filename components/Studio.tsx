@@ -30,7 +30,11 @@ export default function Studio() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const motionFileRef = useRef<HTMLInputElement>(null);\n  const backgroundFileRef = useRef<HTMLInputElement>(null);\n  const backgroundImageRef = useRef<HTMLImageElement | null>(null);\n  const keyCanvasRef = useRef<HTMLCanvasElement | null>(null);\n  const backgroundUrlRef = useRef<string | null>(null);
+  const motionFileRef = useRef<HTMLInputElement>(null);
+  const backgroundFileRef = useRef<HTMLInputElement>(null);
+  const backgroundImageRef = useRef<HTMLImageElement | null>(null);
+  const keyCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const backgroundUrlRef = useRef<string | null>(null);
   const poseRef = useRef<PoseLandmarker | null>(null);
   const faceRef = useRef<FaceLandmarker | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -70,7 +74,12 @@ export default function Studio() {
   const [viewMode, setViewMode] = useState<"tracking" | "source" | "skeleton">("tracking");
   const [recording, setRecording] = useState(false);
   const [note, setNote] = useState("Import a video or connect your camera to begin.");
-  const [activeTab, setActiveTab] = useState("Capture");\n  const [greenScreenEnabled, setGreenScreenEnabled] = useState(false);\n  const [keyColor, setKeyColor] = useState<"green" | "blue">("green");\n  const [keyTolerance, setKeyTolerance] = useState(85);\n  const [backgroundColor, setBackgroundColor] = useState("#101a2b");\n  const [backgroundName, setBackgroundName] = useState("Solid background");
+  const [activeTab, setActiveTab] = useState("Capture");
+  const [greenScreenEnabled, setGreenScreenEnabled] = useState(false);
+  const [keyColor, setKeyColor] = useState<"green" | "blue">("green");
+  const [keyTolerance, setKeyTolerance] = useState(85);
+  const [backgroundColor, setBackgroundColor] = useState("#101a2b");
+  const [backgroundName, setBackgroundName] = useState("Solid background");
 
   useEffect(() => () => {
     playingRef.current = false;
@@ -78,7 +87,8 @@ export default function Studio() {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     const stream = videoRef.current?.srcObject;
     if (stream instanceof MediaStream) stream.getTracks().forEach(track => track.stop());
-    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);\n    if (backgroundUrlRef.current) URL.revokeObjectURL(backgroundUrlRef.current);
+    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+    if (backgroundUrlRef.current) URL.revokeObjectURL(backgroundUrlRef.current);
     poseRef.current?.close();
     faceRef.current?.close();
   }, []);
