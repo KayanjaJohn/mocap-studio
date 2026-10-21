@@ -454,16 +454,22 @@ export default function Studio() {
   }
 
   function exportMotion() {
-    const frames = motionFramesRef.current;
-    if (frames.length === 0) {
-      setNote("Nothing to export yet. Start tracking, record a take, then export.");
+    const allFrames = motionFramesRef.current;
+    if (allFrames.length === 0) {
+      setNote("Nothing to export yet. Import a motion take or record a take first.");
       return;
     }
-    const end = trimEnd || duration;\n    const frames = allFrames.filter(frame => frame.t >= trimStart && frame.t <= end);\n    if (!frames.length) { setNote("The selected trim range contains no recorded motion frames. Adjust the In/Out points first."); return; }\n    const blob = new Blob([JSON.stringify({ format: "mocap-studio-motion-v1", source: sourceName, sourceDuration: duration, trim: { start: trimStart, end }, playbackRate, frameCount: frames.length, frames }, null, 2)], { type: "application/json" });
+    const end = trimEnd || duration || Number.POSITIVE_INFINITY;
+    const frames = allFrames.filter(frame => frame.t >= trimStart && frame.t <= end);
+    if (!frames.length) {
+      setNote("The selected trim range contains no recorded motion frames. Adjust the In/Out points first.");
+      return;
+    }
+    const blob = new Blob([JSON.stringify({ format: "mocap-studio-motion-v1", source: sourceName, sourceDuration: duration, trim: { start: trimStart, end: Number.isFinite(end) ? end : (allFrames[allFrames.length - 1]?.t ?? 0) }, playbackRate, frameCount: frames.length, frames }, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob); const a = document.createElement("a");
     a.href = url; a.download = "mocap-motion-take.json"; a.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    setNote(`Exported ${frames.length} motion frames as JSON.`);
+    setNote(`Exported ${frames.length} motion frames as JSON using the selected trim range.`);
   }
 
   useEffect(() => { paint(); }, [sourceName, viewMode]);\n  useEffect(() => { drawRecordedFrame(currentTime); }, [currentTime, showBody, showIds, viewMode, poseConfidence, engine]);
