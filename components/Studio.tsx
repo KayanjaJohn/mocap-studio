@@ -334,6 +334,7 @@ export default function Studio() {
     const dh = hasVideo ? video!.videoHeight * scale : scale;
     const ox = hasVideo ? (canvas.width - dw) / 2 : (canvas.width - dw) / 2;
     const oy = hasVideo ? (canvas.height - dh) / 2 : (canvas.height - dh) / 2;
+    if (hasVideo && greenScreenEnabled) compositeGreenScreen(ctx, video!, ox, oy, dw, dh);
     frame.people.forEach((person, pi) => {
       const color = ["#5cc8ff", "#c084fc", "#34d399", "#fbbf24", "#fb7185"][pi % 5];
       if (showBody && viewMode !== "source") {
@@ -552,6 +553,7 @@ export default function Studio() {
             // The original video is rendered by the browser at native playback speed;
             // this transparent canvas only draws tracking overlays.
             ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (greenScreenEnabled && viewMode !== "skeleton") compositeGreenScreen(ctx, v, ox, oy, dw, dh);
             if (viewMode !== "source") next.forEach((person, pi) => {
               const color = ["#5cc8ff", "#c084fc", "#34d399", "#fbbf24", "#fb7185"][pi % 5];
               if (showBody) {
