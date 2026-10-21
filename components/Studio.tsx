@@ -10,6 +10,8 @@ import { FilesetResolver, PoseLandmarker, FaceLandmarker } from "@mediapipe/task
 
 type EngineState = "idle" | "loading" | "ready" | "error";
 type CapturePerson = { id: number; pose: { x: number; y: number; visibility: number }[]; faceBlendshapes: Record<string, number> };
+type SavedProject = { id: string; name: string; updatedAt: string; source: string; sourceDuration: number; trim: { start: number; end: number }; playbackRate: number; frames: { t: number; people: CapturePerson[] }[]; showBody: boolean; showIds: boolean };
+const PROJECTS_STORAGE_KEY = "mocap-studio-projects-v1";
 
 const POSE_CONNECTIONS: [number, number][] = [
   // Face outline and features available in the 33-point pose model
@@ -47,6 +49,9 @@ export default function Studio() {
   const [engineMessage, setEngineMessage] = useState("Capture engine not loaded");
   const [sourceName, setSourceName] = useState("");
   const [takeSourceName, setTakeSourceName] = useState("");
+  const [projectName, setProjectName] = useState("Untitled Motion Project");
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
   const [sourceKind, setSourceKind] = useState<"video" | "camera" | null>(null);
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
@@ -77,6 +82,99 @@ export default function Studio() {
     poseRef.current?.close();
     faceRef.current?.close();
   }, []);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(PROJECTS_STORAGE_KEY);
+      if (raw) {
+        const parsed: unknown = JSON.parse(raw);
+        if (Array.isArray(parsed)) setSavedProjects(parsed.filter((item): item is SavedProject => !!item && typeof item === "object" && typeof item.id === "string" && typeof item.name === "string" && Array.isArray(item.frames)));
+      }
+    } catch {
+      setNote("Saved projects could not be read from this browser.");
+    }
+  }, []);
+
+  function persistProjects(projects: SavedProject[]) {
+    try {
+      window.localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(projects));
+      setSavedProjects(projects);
+      return true;
+    } catch {
+      setNote("Could not save this project in browser storage. The project may be too large; export the motion JSON as a backup.");
+      return false;
+    }
+  }
+
+  function saveProject() {
+    const frames = motionFramesRef.current;
+    if (!frames.length) {
+      setNote("Record a take or import a motion JSON before saving a project.");
+      return;
+    }
+    const now = new Date().toISOString();
+    const project: SavedProject = {
+      id: currentProjectId || `project-${Date.now()}`,
+      name: projectName.trim() || "Untitled Motion Project",
+      updatedAt: now,
+      source: sourceName || takeSourceName || "Imported motion take",
+      sourceDuration: duration || frames[frames.length - 1].t,
+      trim: { start: trimStart, end: trimEnd || duration || frames[frames.length - 1].t },
+      playbackRate,
+      frames,
+      showBody,
+      showIds
+    };
+    const projects = [project, ...savedProjects.filter(item => item.id !== project.id)].slice(0, 30);
+    if (persistProjects(projects)) {
+      setCurrentProjectId(project.id);
+      setProjectName(project.name);
+      setNote(`Saved project “${project.name}” in this browser. Re-import its source video after reopening the browser.`);
+    }
+  }
+
+  function openProject(project: SavedProject) {
+    if (!Array.isArray(project.frames) || !project.frames.length) {
+      setNote("This saved project has no motion frames.");
+      return;
+    }
+    playingRef.current = false;
+    setPlaying(false);
+    if (motionPlaybackTimerRef.current !== null) {
+      window.clearInterval(motionPlaybackTimerRef.current);
+      motionPlaybackTimerRef.current = null;
+    }
+    motionFramesRef.current = project.frames;
+    setMotionFrames(project.frames);
+    setCurrentProjectId(project.id);
+    setProjectName(project.name);
+    setTakeSourceName(project.source);
+    setDuration(project.sourceDuration || project.frames[project.frames.length - 1].t);
+    setTrimStart(project.trim?.start || 0);
+    setTrimEnd(project.trim?.end || project.sourceDuration || project.frames[project.frames.length - 1].t);
+    setPlaybackRate(project.playbackRate || 1);
+    setShowBody(project.showBody !== false);
+    setShowIds(project.showIds !== false);
+    setActiveTab("Cut");
+    setSourceName("");
+    setSourceKind(null);
+    sourceKindRef.current = null;
+    videoRef.current?.pause();
+    videoRef.current?.removeAttribute("src");
+    videoRef.current?.load();
+    if (objectUrlRef.current) { URL.revokeObjectURL(objectUrlRef.current); objectUrlRef.current = null; }
+    setNote(`Opened “${project.name}”. Import the matching video separately if you want the motion overlaid on the original footage.`);
+    window.setTimeout(() => drawRecordedFrame(project.frames[0].t), 0);
+    setCurrentTime(project.frames[0].t);
+  }
+
+  function deleteProject(projectId: string) {
+    const next = savedProjects.filter(project => project.id !== projectId);
+    if (persistProjects(next)) {
+      if (currentProjectId === projectId) setCurrentProjectId(null);
+      setNote("Saved project deleted from this browser.");
+    }
+  }
 
   function paint() {
     const canvas = canvasRef.current;
@@ -144,7 +242,7 @@ export default function Studio() {
   }
 
   function drawRecordedFrame(time: number) {
-    if (!motionFramesRef.current.length || (engine === "ready" && playingRef.current)) return;
+    if (!motionFramesRef.current.length || (playingRef.current && sourceKindRef.current && motionPlaybackTimerRef.current === null)) return;
     const canvas = canvasRef.current;
     const video = videoRef.current;
     const ctx = canvas?.getContext("2d");
@@ -212,6 +310,8 @@ export default function Studio() {
       if (!frames.length) throw new Error("No valid motion frames were found in this file.");
       motionFramesRef.current = frames;
       setMotionFrames(frames);
+      setCurrentProjectId(null);
+      setProjectName(file.name.replace(/\.json$/i, ""));
       setTrimStart(Math.max(0, Number(take.trim?.start) || 0));
       setTrimEnd(Math.max(0, Number(take.trim?.end) || Number(take.sourceDuration) || 0));
       if (Number.isFinite(take.playbackRate) && Number(take.playbackRate) > 0) setRate(Number(take.playbackRate));
@@ -425,28 +525,39 @@ export default function Studio() {
   function playRecordedTake() {
     if (!motionFramesRef.current.length) { setNote("Import a motion JSON take first."); return; }
     if (motionPlaybackTimerRef.current !== null) window.clearInterval(motionPlaybackTimerRef.current);
-    const lastTime = Math.max(trimEnd || duration || 0, motionFramesRef.current[motionFramesRef.current.length - 1]?.t || 0);
-    if (currentTime >= lastTime) setCurrentTime(trimStart);
+    const lastFrameTime = motionFramesRef.current[motionFramesRef.current.length - 1]?.t || 0;
+    const lastTime = Math.min(trimEnd || duration || lastFrameTime, lastFrameTime || duration || 0);
+    if (currentTime >= lastTime) {
+      if (sourceKindRef.current === "video" && videoRef.current) videoRef.current.currentTime = trimStart;
+      setCurrentTime(trimStart);
+    }
     playingRef.current = true;
     setPlaying(true);
     let previous = performance.now();
+    const sourceVideo = sourceKindRef.current === "video" ? videoRef.current : null;
+    if (sourceVideo) {
+      sourceVideo.playbackRate = playbackRate;
+      if (sourceVideo.currentTime < trimStart || sourceVideo.currentTime >= lastTime) sourceVideo.currentTime = trimStart;
+      void sourceVideo.play().catch(() => setNote("Could not play the source video. Tap Play again to retry."));
+    }
     motionPlaybackTimerRef.current = window.setInterval(() => {
       const now = performance.now();
       const delta = (now - previous) / 1000 * playbackRate;
       previous = now;
       setCurrentTime(current => {
-        const next = current + delta;
+        const next = sourceVideo ? sourceVideo.currentTime : current + delta;
         if (next >= lastTime) {
           if (motionPlaybackTimerRef.current !== null) window.clearInterval(motionPlaybackTimerRef.current);
           motionPlaybackTimerRef.current = null;
           playingRef.current = false;
           setPlaying(false);
+          sourceVideo?.pause();
           return lastTime;
         }
         return next;
       });
     }, 33);
-    setNote("Playing recorded motion take.");
+    setNote(sourceVideo ? "Playing recorded motion over the source video." : "Playing recorded motion take.");
   }
 
   function stopTracking() {
@@ -522,6 +633,7 @@ export default function Studio() {
       <aside className="left-panel">
         <div className="panel-heading">ASSETS <button className="icon-btn" onClick={()=>fileRef.current?.click()}><Plus size={15}/> Add</button></div>
         <section className="section"><h3>Sources <small>{sourceName?"1 item":"0 items"}</small></h3><div className="asset-card"><div className="asset-icon"><FileVideo size={19}/></div><div><strong>{sourceName||"No source loaded"}</strong><span>{sourceName?sourceKind==="camera"?"Live camera source":"Video source":"Import video or use camera"}</span></div></div><input ref={fileRef} hidden type="file" accept="video/*" onChange={e=>{void useVideoFile(e.target.files?.[0]);e.currentTarget.value="";}}/><input ref={motionFileRef} hidden type="file" accept=".json,application/json" onChange={e=>{void importMotionFile(e.target.files?.[0]);e.currentTarget.value="";}}/><div className="button-row"><button className="btn" onClick={()=>fileRef.current?.click()}><Upload size={14}/> Import Video</button><button className="btn" onClick={useCamera}><Camera size={14}/> Use Camera</button></div></section>
+        <section className="section project-library"><h3>Projects <small>{savedProjects.length} saved</small></h3><label className="field-label" htmlFor="project-name">Project name</label><input id="project-name" className="project-name-input" value={projectName} maxLength={80} onChange={e=>setProjectName(e.target.value)} placeholder="Name this motion project"/><button className="btn wide" onClick={saveProject}><FolderOpen size={14}/> {currentProjectId?"Save Project":"Save Current Take"}</button><p className="range-help">Projects are stored in this browser only. Export JSON regularly for backup.</p>{savedProjects.length===0?<div className="empty">Saved projects will appear here.</div>:savedProjects.map(project=><div className="saved-project" key={project.id}><button className="saved-project-open" onClick={()=>openProject(project)}><strong>{project.name}</strong><span>{project.frames.length} frames · {new Date(project.updatedAt).toLocaleDateString()}</span></button><button className="icon-btn delete-project" aria-label={`Delete ${project.name}`} title="Delete saved project" onClick={()=>deleteProject(project.id)}>×</button></div>)}</section>
         <section className="section"><h3>Characters <small>No avatar</small></h3><div className="asset-card"><div className="asset-icon"><Users size={19}/></div><div><strong>No character loaded</strong><span>Character import comes in Stage 2</span></div></div><div className="notice">Stage 1 focuses on reliable capture and motion-data export. 3D rig retargeting is next.</div></section>
         <section className="section"><h3>Tracked People <small>{people.length} detected</small></h3>{people.length===0?<div className="empty">Load the engine and start a source to detect people.</div>:people.map(p=><div className="person-row" key={p.id}><span className="person-dot" style={{background:["#5cc8ff","#c084fc","#34d399","#fbbf24","#fb7185"][(p.id-1)%5]}}/><strong>Person {p.id}</strong><span>{p.pose.length} landmarks</span></div>)}</section>
         <div className="left-footer"><ShieldCheck size={14}/> Local inference · video stays in browser</div>
@@ -529,7 +641,7 @@ export default function Studio() {
       <section className="center-panel">
         <div className="viewport-toolbar"><label>View <select value={viewMode} onChange={e => setViewMode(e.target.value as "tracking" | "source" | "skeleton")}><option value="tracking">Source + Tracking</option><option value="source">Source only</option><option value="skeleton">Skeleton only</option></select></label><label className="check"><input type="checkbox" checked={showBody} onChange={e=>setShowBody(e.target.checked)}/> Body</label><label className="check"><input type="checkbox" checked={showFace} onChange={e=>setShowFace(e.target.checked)}/> Face</label><label className="check"><input type="checkbox" checked={showIds} onChange={e=>setShowIds(e.target.checked)}/> IDs</label><span className="source-status">{sourceName||"Waiting for source"}</span></div>
         <div className="viewport"><video ref={videoRef} className="hidden-video" style={{opacity:viewMode==="skeleton"?0:1}} playsInline muted onLoadedMetadata={e=>{const v=e.currentTarget;const d=Number.isFinite(v.duration)?v.duration:0;setDuration(d);setTrimStart(0);setTrimEnd(d);setCurrentTime(v.currentTime||0);paint();}} onTimeUpdate={e=>setCurrentTime(e.currentTarget.currentTime)} onEnded={()=>{playingRef.current=false;setPlaying(false);setNote("Video ended.");}}/><canvas ref={canvasRef} className="capture-canvas" /><div className="viewport-counters"><span>{sourceName?"SOURCE LOADED":"NO SOURCE"}</span><span>{people.length} PEOPLE</span></div>{!sourceName&&<div className="viewport-overlay"><div className="big-icon"><Activity size={26}/></div><strong>Ready to capture motion</strong><span>Load the engine, then import a video or connect your camera.</span></div>}</div>
-        <div className="transport"><button className="btn" onClick={playing?stopTracking:(sourceName?startTracking:playRecordedTake)} disabled={!sourceName&&!motionFrames.length}>{playing?<Square size={14}/>:<Play size={14}/>} {playing?"Pause / Stop":"Play / Track"}</button><button className="btn" onClick={()=>seekTo(currentTime-5)} disabled={!duration}><SkipBack size={14}/> 5s</button><button className="btn" onClick={()=>seekTo(currentTime+5)} disabled={!duration}>5s <SkipForward size={14}/></button><label className="speed-control">Speed <select value={playbackRate} onChange={e=>setRate(Number(e.target.value))} disabled={sourceKind!=="video"&&!motionFrames.length}><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1">1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></label><button className={`btn ${recording?"danger":""}`} onClick={toggleRecord}>{recording?<Square size={14}/>:<CircleHelp size={14}/>} {recording?"Stop Take":"Record Take"}</button><span className="transport-note">{note}</span></div>
+        <div className="transport"><button className="btn" onClick={playing?stopTracking:(sourceName&&motionFrames.length===0?startTracking:playRecordedTake)} disabled={!sourceName&&!motionFrames.length}>{playing?<Square size={14}/>:<Play size={14}/>} {playing?"Pause / Stop":"Play / Track"}</button><button className="btn" onClick={()=>seekTo(currentTime-5)} disabled={!duration}><SkipBack size={14}/> 5s</button><button className="btn" onClick={()=>seekTo(currentTime+5)} disabled={!duration}>5s <SkipForward size={14}/></button><label className="speed-control">Speed <select value={playbackRate} onChange={e=>setRate(Number(e.target.value))} disabled={sourceKind!=="video"&&!motionFrames.length}><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1">1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></label><button className={`btn ${recording?"danger":""}`} onClick={toggleRecord}>{recording?<Square size={14}/>:<CircleHelp size={14}/>} {recording?"Stop Take":"Record Take"}</button><span className="transport-note">{note}</span></div>
         <div className="timeline"><div className="timeline-head"><strong>{activeTab==="Cut"?"Cut & Trim Timeline":"Timeline"}</strong><span>{formatTime(currentTime)} / {formatTime(duration)} · {motionFrames.length} motion frames</span></div><input aria-label="Seek video timeline" className="timeline-seek" type="range" min="0" max={Math.max(duration,0.01)} step="0.01" value={Math.min(currentTime,Math.max(duration,0.01))} onChange={e=>seekTo(Number(e.target.value))} disabled={!duration||(!sourceKind&&!motionFrames.length)||(sourceKind==="camera")}/><div className="ruler"><span>00:00</span><span>{formatTime(duration*.25)}</span><span>{formatTime(duration*.5)}</span><span>{formatTime(duration*.75)}</span><span>{formatTime(duration)}</span></div><div className="track"><span>Source video · {sourceName||"No clip"}</span>{duration>0&&<i style={{left:(trimStart/duration*100)+"%",width:(Math.max(0,(trimEnd-trimStart)/duration*100))+"%"}}/>}</div>{activeTab==="Cut"&&<div className="timeline-trim"><span>IN <b>{formatTime(trimStart)}</b></span><button className="btn" onClick={markTrimStart} disabled={!duration}>Set In at Playhead</button><button className="btn" onClick={markTrimEnd} disabled={!duration}>Set Out at Playhead</button><button className="btn" onClick={resetTrim} disabled={!duration}>Reset</button><span>OUT <b>{formatTime(trimEnd)}</b></span></div>}</div>
       </section>
       <aside className="right-panel"><div className="panel-heading">PROPERTIES <span>{activeTab.toUpperCase()}</span></div><section className="section"><h3>Detection</h3><label className="toggle-line"><input type="checkbox" checked={showFace} onChange={e=>{setShowFace(e.target.checked);setNote("Face tracking preference changed. Click Apply Detection Settings to reload the engine with this option.");}}/><span>Enable face tracking <small>Uses extra processing</small></span></label><label className="range-label">Body sensitivity <b>{poseConfidence.toFixed(2)}</b></label><input className="range" type="range" min=".1" max=".95" step=".05" value={poseConfidence} onChange={e=>setPoseConfidence(Number(e.target.value))}/><p className="range-help">Lower values detect more uncertain or partly obscured joints. Higher values filter out weaker detections.</p><label className="range-label">Face sensitivity <b>{faceConfidence.toFixed(2)}</b></label><input className="range" type="range" min=".1" max=".95" step=".05" value={faceConfidence} onChange={e=>setFaceConfidence(Number(e.target.value))}/><label className="field-label">Maximum people</label><select className="wide-select" value={maxPeople} onChange={e=>setMaxPeople(e.target.value)}><option value="1">1 person</option><option value="2">2 people</option><option value="3">3 people</option><option value="4">4 people</option><option value="5">5 people</option><option value="8">8 people</option></select><button className="btn wide" onClick={()=>{if(engine==="ready"){poseRef.current?.close();faceRef.current?.close();setEngine("idle");setEngineMessage("Reload engine to apply detection settings.");}setNote("Detection settings saved for the next engine load.");}}><Settings2 size={14}/> Apply Detection Settings</button></section><section className="section"><h3>Capture Engine</h3><div className={`engine-card ${engine}`}><div className="engine-dot"/><div><strong>{topStatus}</strong><span>{engineMessage}</span></div></div><div className="notice">Higher body sensitivity and the expanded skeleton overlay help reveal more landmarks. The lightweight pose model tracks 33 body points; detailed finger articulation requires a dedicated hand model. Face tracking loads a second model and can reduce performance on lower-powered devices.</div></section><section className="section"><h3>Next stages</h3><div className="feature"><Layers size={16}/><span>3D avatar rig mapping</span><small>Stage 2</small></div><div className="feature"><ScanFace size={16}/><span>Facial blendshape retargeting</span><small>Stage 2</small></div><div className="feature"><Video size={16}/><span>Rendered video export</span><small>Stage 3</small></div><div className="feature"><FolderOpen size={16}/><span>Save projects to Supabase</span><small>Stage 3</small></div></section></aside>
