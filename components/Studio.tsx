@@ -682,7 +682,7 @@ export default function Studio() {
   }
 
   useEffect(() => { paint(); }, [sourceName, viewMode]);
-  useEffect(() => { drawRecordedFrame(currentTime); }, [currentTime, showBody, showIds, viewMode, poseConfidence, engine]);
+  useEffect(() => { drawRecordedFrame(currentTime); }, [currentTime, showBody, showIds, viewMode, poseConfidence, engine, greenScreenEnabled, keyColor, keyTolerance, backgroundColor, backgroundName]);
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
