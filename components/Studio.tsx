@@ -41,10 +41,12 @@ export default function Studio() {
   const playingRef = useRef(false);
   const sourceKindRef = useRef<"video" | "camera" | null>(null);
   const motionFramesRef = useRef<{ t: number; people: CapturePerson[] }[]>([]);
-  const objectUrlRef = useRef<string | null>(null);\n  const motionPlaybackTimerRef = useRef<number | null>(null);
+  const objectUrlRef = useRef<string | null>(null);
+  const motionPlaybackTimerRef = useRef<number | null>(null);
   const [engine, setEngine] = useState<EngineState>("idle");
   const [engineMessage, setEngineMessage] = useState("Capture engine not loaded");
-  const [sourceName, setSourceName] = useState("");\n  const [takeSourceName, setTakeSourceName] = useState("");
+  const [sourceName, setSourceName] = useState("");
+  const [takeSourceName, setTakeSourceName] = useState("");
   const [sourceKind, setSourceKind] = useState<"video" | "camera" | null>(null);
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
@@ -499,7 +501,8 @@ export default function Studio() {
     setNote(`Exported ${frames.length} motion frames as JSON using the selected trim range.`);
   }
 
-  useEffect(() => { paint(); }, [sourceName, viewMode]);\n  useEffect(() => { drawRecordedFrame(currentTime); }, [currentTime, showBody, showIds, viewMode, poseConfidence, engine]);
+  useEffect(() => { paint(); }, [sourceName, viewMode]);
+  useEffect(() => { drawRecordedFrame(currentTime); }, [currentTime, showBody, showIds, viewMode, poseConfidence, engine]);
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
