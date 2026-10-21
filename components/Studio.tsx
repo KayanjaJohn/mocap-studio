@@ -9,7 +9,7 @@ import {
 import { FilesetResolver, PoseLandmarker, FaceLandmarker } from "@mediapipe/tasks-vision";
 
 type EngineState = "idle" | "loading" | "ready" | "error";
-type CapturePerson = { id: number; pose: { x: number; y: number; visibility: number }[]; faceBlendshapes: Record<string, number> };
+type CapturePerson = { id: number; pose: { x: number; y: number; visibility: number }[]; faceBlendshapes: Record<string, number> };\ntype SavedProject = { id: string; name: string; updatedAt: string; source: string; sourceDuration: number; trim: { start: number; end: number }; playbackRate: number; frames: { t: number; people: CapturePerson[] }[]; showBody: boolean; showIds: boolean };\nconst PROJECTS_STORAGE_KEY = "mocap-studio-projects-v1";
 
 const POSE_CONNECTIONS: [number, number][] = [
   // Face outline and features available in the 33-point pose model
@@ -46,7 +46,7 @@ export default function Studio() {
   const [engine, setEngine] = useState<EngineState>("idle");
   const [engineMessage, setEngineMessage] = useState("Capture engine not loaded");
   const [sourceName, setSourceName] = useState("");
-  const [takeSourceName, setTakeSourceName] = useState("");
+  const [takeSourceName, setTakeSourceName] = useState("");\n  const [projectName, setProjectName] = useState("Untitled Motion Project");\n  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);\n  const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
   const [sourceKind, setSourceKind] = useState<"video" | "camera" | null>(null);
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
@@ -77,6 +77,95 @@ export default function Studio() {
     poseRef.current?.close();
     faceRef.current?.close();
   }, []);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(PROJECTS_STORAGE_KEY);
+      if (raw) {
+        const parsed: unknown = JSON.parse(raw);
+        if (Array.isArray(parsed)) setSavedProjects(parsed.filter((item): item is SavedProject => !!item && typeof item === "object" && typeof item.id === "string" && typeof item.name === "string" && Array.isArray(item.frames)));
+      }
+    } catch {
+      setNote("Saved projects could not be read from this browser.");
+    }
+  }, []);
+
+  function persistProjects(projects: SavedProject[]) {
+    try {
+      window.localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(projects));
+      setSavedProjects(projects);
+      return true;
+    } catch {
+      setNote("Could not save this project in browser storage. The project may be too large; export the motion JSON as a backup.");
+      return false;
+    }
+  }
+
+  function saveProject() {
+    const frames = motionFramesRef.current;
+    if (!frames.length) {
+      setNote("Record a take or import a motion JSON before saving a project.");
+      return;
+    }
+    const now = new Date().toISOString();
+    const project: SavedProject = {
+      id: currentProjectId || `project-${Date.now()}`,
+      name: projectName.trim() || "Untitled Motion Project",
+      updatedAt: now,
+      source: sourceName || takeSourceName || "Imported motion take",
+      sourceDuration: duration || frames[frames.length - 1].t,
+      trim: { start: trimStart, end: trimEnd || duration || frames[frames.length - 1].t },
+      playbackRate,
+      frames,
+      showBody,
+      showIds
+    };
+    const projects = [project, ...savedProjects.filter(item => item.id !== project.id)].slice(0, 30);
+    if (persistProjects(projects)) {
+      setCurrentProjectId(project.id);
+      setProjectName(project.name);
+      setNote(`Saved project “${project.name}” in this browser. Re-import its source video after reopening the browser.`);
+    }
+  }
+
+  function openProject(project: SavedProject) {
+    if (!Array.isArray(project.frames) || !project.frames.length) {
+      setNote("This saved project has no motion frames.");
+      return;
+    }
+    playingRef.current = false;
+    setPlaying(false);
+    if (motionPlaybackTimerRef.current !== null) {
+      window.clearInterval(motionPlaybackTimerRef.current);
+      motionPlaybackTimerRef.current = null;
+    }
+    motionFramesRef.current = project.frames;
+    setMotionFrames(project.frames);
+    setCurrentProjectId(project.id);
+    setProjectName(project.name);
+    setTakeSourceName(project.source);
+    setDuration(project.sourceDuration || project.frames[project.frames.length - 1].t);
+    setTrimStart(project.trim?.start || 0);
+    setTrimEnd(project.trim?.end || project.sourceDuration || project.frames[project.frames.length - 1].t);
+    setPlaybackRate(project.playbackRate || 1);
+    setShowBody(project.showBody !== false);
+    setShowIds(project.showIds !== false);
+    setActiveTab("Cut");
+    setSourceName("");
+    setSourceKind(null);
+    sourceKindRef.current = null;
+    setNote(`Opened “${project.name}”. Import the matching video separately if you want the motion overlaid on the original footage.`);
+    window.setTimeout(() => drawRecordedFrame(project.frames[0].t), 0);
+    setCurrentTime(project.frames[0].t);
+  }
+
+  function deleteProject(projectId: string) {
+    const next = savedProjects.filter(project => project.id !== projectId);
+    if (persistProjects(next)) {
+      if (currentProjectId === projectId) setCurrentProjectId(null);
+      setNote("Saved project deleted from this browser.");
+    }
+  }
 
   function paint() {
     const canvas = canvasRef.current;
@@ -522,6 +611,7 @@ export default function Studio() {
       <aside className="left-panel">
         <div className="panel-heading">ASSETS <button className="icon-btn" onClick={()=>fileRef.current?.click()}><Plus size={15}/> Add</button></div>
         <section className="section"><h3>Sources <small>{sourceName?"1 item":"0 items"}</small></h3><div className="asset-card"><div className="asset-icon"><FileVideo size={19}/></div><div><strong>{sourceName||"No source loaded"}</strong><span>{sourceName?sourceKind==="camera"?"Live camera source":"Video source":"Import video or use camera"}</span></div></div><input ref={fileRef} hidden type="file" accept="video/*" onChange={e=>{void useVideoFile(e.target.files?.[0]);e.currentTarget.value="";}}/><input ref={motionFileRef} hidden type="file" accept=".json,application/json" onChange={e=>{void importMotionFile(e.target.files?.[0]);e.currentTarget.value="";}}/><div className="button-row"><button className="btn" onClick={()=>fileRef.current?.click()}><Upload size={14}/> Import Video</button><button className="btn" onClick={useCamera}><Camera size={14}/> Use Camera</button></div></section>
+        <section className="section project-library"><h3>Projects <small>{savedProjects.length} saved</small></h3><label className="field-label" htmlFor="project-name">Project name</label><input id="project-name" className="project-name-input" value={projectName} maxLength={80} onChange={e=>setProjectName(e.target.value)} placeholder="Name this motion project"/><button className="btn wide" onClick={saveProject}><FolderOpen size={14}/> {currentProjectId?"Save Project":"Save Current Take"}</button><p className="range-help">Projects are stored in this browser only. Export JSON regularly for backup.</p>{savedProjects.length===0?<div className="empty">Saved projects will appear here.</div>:savedProjects.map(project=><div className="saved-project" key={project.id}><button className="saved-project-open" onClick={()=>openProject(project)}><strong>{project.name}</strong><span>{project.frames.length} frames · {new Date(project.updatedAt).toLocaleDateString()}</span></button><button className="icon-btn delete-project" aria-label={`Delete ${project.name}`} title="Delete saved project" onClick={()=>deleteProject(project.id)}>×</button></div>)}</section>
         <section className="section"><h3>Characters <small>No avatar</small></h3><div className="asset-card"><div className="asset-icon"><Users size={19}/></div><div><strong>No character loaded</strong><span>Character import comes in Stage 2</span></div></div><div className="notice">Stage 1 focuses on reliable capture and motion-data export. 3D rig retargeting is next.</div></section>
         <section className="section"><h3>Tracked People <small>{people.length} detected</small></h3>{people.length===0?<div className="empty">Load the engine and start a source to detect people.</div>:people.map(p=><div className="person-row" key={p.id}><span className="person-dot" style={{background:["#5cc8ff","#c084fc","#34d399","#fbbf24","#fb7185"][(p.id-1)%5]}}/><strong>Person {p.id}</strong><span>{p.pose.length} landmarks</span></div>)}</section>
         <div className="left-footer"><ShieldCheck size={14}/> Local inference · video stays in browser</div>
